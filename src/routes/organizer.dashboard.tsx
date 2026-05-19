@@ -3,8 +3,6 @@ import { useEffect, useState } from "react";
 import { Trash2, Pencil, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { useServerFn } from "@tanstack/react-start";
-import { decidePendingTicket } from "@/lib/payment.functions";
 import { Logo } from "@/components/Logo";
 
 export const Route = createFileRoute("/organizer/dashboard")({
@@ -71,26 +69,28 @@ function OrganizerDashboard() {
   const [confirmDelete, setConfirmDelete] = useState<EventWithCounts | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [decidingId, setDecidingId] = useState<string | null>(null);
-  const decide = useServerFn(decidePendingTicket);
 
   async function handleDecide(t: PendingTicket, decision: "approve" | "reject") {
     setDecidingId(t.id);
     try {
-      await decide({ data: { ticketId: t.id, decision } });
+      const { error } = await supabase
+        .from("tickets")
+        .update({ payment_status: decision === "approve" ? "paid" : "rejected" })
+        .eq("id", t.id)
+        .eq("event_id", t.event_id)
+        .eq("payment_status", "pending")
+        .eq("payment_method", "bank_transfer");
+      if (error) throw new Error(error.message);
       setPending((prev) => prev.filter((p) => p.id !== t.id));
       if (decision === "approve") {
-        toast.success(`Ticket approved and sent to ${t.attendee_email}`);
+        toast.success(`Ticket approved for ${t.attendee_email}`);
         if (userId) loadEvents(userId);
       } else {
         toast("Ticket rejected");
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Action failed";
-      const retryMessage =
-        decision === "approve"
-          ? `${message}. Ticket remains pending so you can retry once the email issue is fixed.`
-          : message;
-      toast.error(retryMessage);
+      toast.error(message);
     } finally {
       setDecidingId(null);
     }

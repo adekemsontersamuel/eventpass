@@ -2,7 +2,7 @@
 
 Event ticketing app: organizers create events with tiered ticket categories (Early Bird, Regular, VIP), attendees pay via Flutterwave (MUR / Rs) and receive a QR pass that organizers scan at the door for check-in.
 
-Built with **TanStack Start** (React 19 + Vite 7), **Tailwind CSS v4**, **shadcn/ui**, and **Supabase** (Postgres + Auth + Storage) for the backend.
+Built with **React 19 + Vite 7**, **TanStack Router**, **Tailwind CSS v4**, **shadcn/ui**, and **Supabase** (Postgres + Auth + Storage).
 
 ---
 
@@ -64,17 +64,11 @@ VITE_SUPABASE_URL="https://<project-ref>.supabase.co"
 VITE_SUPABASE_PUBLISHABLE_KEY="<anon-key>"
 VITE_SUPABASE_PROJECT_ID="<project-ref>"
 
-# Server (used by TanStack server functions)
-SUPABASE_URL="https://<project-ref>.supabase.co"
-SUPABASE_PUBLISHABLE_KEY="<anon-key>"
-SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
-
 # Flutterwave (test keys for local dev)
-FLW_PUBLIC_KEY="FLWPUBK_TEST-xxxxxxxx"
-FLW_SECRET_KEY="FLWSECK_TEST-xxxxxxxx"
+VITE_FLW_PUBLIC_KEY="FLWPUBK_TEST-xxxxxxxx"
 ```
 
-> ⚠️ Never commit `.env` or expose `SUPABASE_SERVICE_ROLE_KEY` / `FLW_SECRET_KEY` to the client.
+> ⚠️ Never commit `.env`. Only `VITE_*` variables are exposed to the browser.
 
 ---
 
@@ -161,7 +155,7 @@ supabase/
 - **`Missing Supabase environment variable(s)`** — your `.env` is missing or VS Code hasn't picked it up. Restart the dev server after editing `.env`.
 - **Payments fail with "Payment provider not configured"** — `FLW_SECRET_KEY` is missing from `.env`.
 - **Migration errors on `db push`** — make sure the project is linked (`supabase link --project-ref ...`) and that you have no conflicting tables in the remote DB.
-- **`Unauthorized` from a server function** — sign in first; protected server functions require an authenticated Supabase session.
+- **Organizer actions fail with `Unauthorized`** — sign in first and confirm your Supabase RLS policies allow the organizer action.
 
 ---
 

@@ -1,8 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useServerFn } from "@tanstack/react-start";
-import { checkInTicket } from "@/lib/payment.functions";
 import { Logo } from "@/components/Logo";
 
 export const Route = createFileRoute("/organizer/scan/$eventId")({
@@ -25,7 +23,6 @@ function ScannerPage() {
   const scannerRef = useRef<{ stop: () => Promise<void>; clear: () => void } | null>(null);
   const isProcessingRef = useRef(false);
   const lastScanRef = useRef<{ id: string; t: number } | null>(null);
-  const checkIn = useServerFn(checkInTicket);
 
   // Auth + load event
   useEffect(() => {
@@ -123,18 +120,30 @@ function ScannerPage() {
 
     isProcessingRef.current = true;
     try {
-      const res = await checkIn({ data: { ticketId: decodedText, eventId } });
-      if (res.result === "ok") {
-        setFlash({ kind: "ok", name: res.attendeeName });
-        setCounts((c) => ({ ...c, checkedIn: c.checkedIn + 1 }));
-      } else if (res.result === "already") {
+      const { data: ticket, error } = await supabase
+        .from("tickets")
+        .select("id, event_id, attendee_name, payment_status, checked_in, checked_in_at")
+        .eq("id", decodedText)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+
+      if (!ticket || ticket.event_id !== eventId || ticket.payment_status !== "paid") {
+        setFlash({ kind: "invalid" });
+      } else if (ticket.checked_in) {
         setFlash({
           kind: "already",
-          name: res.attendeeName,
-          at: res.checkedInAt,
+          name: ticket.attendee_name,
+          at: ticket.checked_in_at,
         });
       } else {
-        setFlash({ kind: "invalid" });
+        const nowIso = new Date().toISOString();
+        const { error: updateError } = await supabase
+          .from("tickets")
+          .update({ checked_in: true, checked_in_at: nowIso })
+          .eq("id", ticket.id);
+        if (updateError) throw new Error(updateError.message);
+        setFlash({ kind: "ok", name: ticket.attendee_name });
+        setCounts((c) => ({ ...c, checkedIn: c.checkedIn + 1 }));
       }
     } catch {
       setFlash({ kind: "invalid" });

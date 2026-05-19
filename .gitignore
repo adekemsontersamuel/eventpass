@@ -5,6 +5,7 @@
 node_modules/
 dist/
 .wrangler/
+package-lock.json
 
 npm-debug.log*
 yarn-debug.log*

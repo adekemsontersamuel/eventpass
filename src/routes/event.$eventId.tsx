@@ -2,12 +2,6 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { useServerFn } from "@tanstack/react-start";
-import {
-  getFlutterwavePublicKey,
-  verifyAndCreateTicket,
-  createBankTransferTicket,
-} from "@/lib/payment.functions";
 import { loadFlutterwave } from "@/lib/flutterwave";
 import { Logo } from "@/components/Logo";
 
@@ -47,6 +41,39 @@ const KIND_LABEL: Record<CategoryWithStock["kind"], string> = {
   vip: "VIP",
 };
 
+async function assertCategoryAvailable(categoryId: string, eventId: string) {
+  const { data: category, error: catErr } = await supabase
+    .from("event_ticket_categories")
+    .select("id, event_id, enabled, price, quantity")
+    .eq("id", categoryId)
+    .maybeSingle();
+  if (catErr) throw new Error(catErr.message);
+  if (!category || category.event_id !== eventId || !category.enabled) {
+    throw new Error("Invalid ticket category");
+  }
+
+  const { count, error: countErr } = await supabase
+    .from("tickets")
+    .select("id", { count: "exact", head: true })
+    .eq("category_id", category.id)
+    .eq("payment_status", "paid");
+  if (countErr) throw new Error(countErr.message);
+  if ((count ?? 0) >= category.quantity) {
+    throw new Error("Sorry, this ticket category is now sold out.");
+  }
+  return category;
+}
+
+function makeBankReference(firstName: string) {
+  const clean =
+    (firstName || "GUEST")
+      .toUpperCase()
+      .replace(/[^A-Z]/g, "")
+      .slice(0, 10) || "GUEST";
+  const digits = Math.floor(1000 + Math.random() * 9000);
+  return `PP-${clean}-${digits}`;
+}
+
 function EventLandingPage() {
   const { eventId } = Route.useParams();
   const navigate = useNavigate();
@@ -63,10 +90,6 @@ function EventLandingPage() {
     reference: string;
     amount: number;
   } | null>(null);
-
-  const getKey = useServerFn(getFlutterwavePublicKey);
-  const verify = useServerFn(verifyAndCreateTicket);
-  const createBT = useServerFn(createBankTransferTicket);
 
   useEffect(() => {
     (async () => {
@@ -124,14 +147,21 @@ function EventLandingPage() {
 
     if (method === "bank_transfer") {
       try {
-        const { reference, amount } = await createBT({
-          data: {
-            eventId: event.id,
-            categoryId: selected.id,
-            attendeeName: name,
-            attendeeEmail: email,
-          },
+        const category = await assertCategoryAvailable(selected.id, event.id);
+        const firstName = name.trim().split(/\s+/)[0] ?? "GUEST";
+        const reference = makeBankReference(firstName);
+        const amount = Number(category.price);
+        const { error: insertError } = await supabase.from("tickets").insert({
+          event_id: event.id,
+          category_id: category.id,
+          attendee_name: name,
+          attendee_email: email,
+          payment_reference: reference,
+          payment_status: "pending",
+          payment_method: "bank_transfer",
+          amount_paid: amount,
         });
+        if (insertError) throw new Error(insertError.message);
         setBankInfo({ reference, amount });
         setBusy(false);
       } catch (err) {
@@ -143,7 +173,8 @@ function EventLandingPage() {
 
     // Card via Flutterwave
     try {
-      const [{ publicKey }] = await Promise.all([getKey(), loadFlutterwave()]);
+      const publicKey = import.meta.env.VITE_FLW_PUBLIC_KEY ?? "";
+      await loadFlutterwave();
       if (!publicKey) throw new Error("Payment provider not configured.");
       if (!window.FlutterwaveCheckout) throw new Error("Checkout not ready.");
 
@@ -168,15 +199,29 @@ function EventLandingPage() {
               (window as any).closePaymentModal();
             }
 
-            const { ticketId } = await verify({
-              data: {
-                transactionId: data.transaction_id,
-                eventId: event.id,
-                categoryId: selected.id,
-                attendeeName: name,
-                attendeeEmail: email,
-              },
-            });
+            if (data.status !== "successful") {
+              throw new Error("Payment not successful");
+            }
+
+            const category = await assertCategoryAvailable(selected.id, event.id);
+            const { data: ticket, error: insertError } = await supabase
+              .from("tickets")
+              .insert({
+                event_id: event.id,
+                category_id: category.id,
+                attendee_name: name,
+                attendee_email: email,
+                payment_reference: String(data.transaction_id),
+                payment_status: "paid",
+                payment_method: "card",
+                amount_paid: Number(category.price),
+              })
+              .select("id")
+              .single();
+            if (insertError || !ticket) {
+              throw new Error(insertError?.message ?? "Could not create ticket");
+            }
+            const ticketId = ticket.id;
             navigate({ to: "/ticket/$ticketId", params: { ticketId } });
           } catch (err) {
             setError(err instanceof Error ? err.message : "Could not create ticket");
