@@ -1,0 +1,1 @@
+UPDATE public.events SET currency = 'MUR' WHERE currency = 'NGN';
